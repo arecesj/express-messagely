@@ -1,3 +1,10 @@
+const express = require('express');
+const router = new express.Router();
+const Message = require('../models/message');
+const jwt = require('jsonwebtoken');
+const { PHONE_NUMBER, MA_PHONE_NUMBER } = require('../config');
+const { ensureLoggedIn } = require('../middleware/auth');
+
 /** GET /:id - get detail of message.
  *
  * => {message: {id,
@@ -10,7 +17,23 @@
  * Make sure that the currently-logged-in users is either the to or from user.
  *
  **/
+router.get('/:id', ensureLoggedIn, async function(req, res, next) {
+  try {
+    let message = await Message.get(req.params.id);
 
+    if (
+      message.from_user.username === req.username ||
+      message.to_user.username === req.username
+    ) {
+      return res.json({ message });
+    }
+
+    return next({ message: `Invalid user/message` });
+    //TODO: Add status code
+  } catch (err) {
+    return next(err);
+  }
+});
 
 /** POST / - post message.
  *
@@ -18,7 +41,19 @@
  *   {message: {id, from_username, to_username, body, sent_at}}
  *
  **/
-
+router.post('/', ensureLoggedIn, async function(req, res, next) {
+  try {
+    const { to_username, body } = req.body;
+    let message = await Message.create({
+      from_username: req.username,
+      to_username,
+      body
+    });
+    return res.json({ message });
+  } catch (err) {
+    return next(err);
+  }
+});
 
 /** POST/:id/read - mark message as read:
  *
@@ -27,4 +62,29 @@
  * Make sure that the only the intended recipient can mark as read.
  *
  **/
+router.post('/:id/read', ensureLoggedIn, async function(req, res, next) {
+  try {
+    let message = await Message.markRead(req.params.id);
+    if (message.to_username === req.username) {
+      return res.json({ message });
+    }
+    let error = new Error(`Not intended recipient`);
+    error.status = 404;
+    throw error;
+  } catch (err) {
+    return next(err);
+  }
+});
 
+router.post('/twilio', ensureLoggedIn, async function(req, res, next) {
+  try {
+    let { from_username, to_username, body } = req.body;
+    let message = await Message.twilio({ from_username, to_username, body });
+    console;
+    return res.json({ message: message.body });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+module.exports = router;

@@ -1,6 +1,8 @@
 /** Message class for message.ly */
 
 const db = require('../db');
+const { ACCOUNT_SID, ACCOUNT_TOKEN, PHONE_NUMBER } = require('../config');
+const client = require('twilio')(ACCOUNT_SID, ACCOUNT_TOKEN);
 
 /** Message on the site. */
 
@@ -21,7 +23,7 @@ class Message {
     let newMessage = await db.query(
       `INSERT INTO messages (from_username, to_username, body, sent_at)
         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-        RETURNING from_username, to_username, body, sent_at`,
+        RETURNING id, from_username, to_username, body, sent_at`,
       [from_username, to_username, body]
     );
     this._404Error(newMessage);
@@ -31,12 +33,14 @@ class Message {
   /** Update read_at for message */
 
   static async markRead(id) {
-    return await db.query(
+    let read = await db.query(
       `UPDATE messages
       SET read_at = CURRENT_TIMESTAMP
-      WHERE id = $1`,
+      WHERE id = $1
+      RETURNING id, read_at, to_username`,
       [id]
     );
+    return read.rows[0];
   }
 
   /** Get: get message by id
@@ -51,13 +55,12 @@ class Message {
       `SELECT id, from_username, to_username, body, sent_at, read_at
       FROM messages
       WHERE id = $1
-      RETURNING id, from_username, to_username, body, sent_at, read_at
       `,
       [id]
     );
     let toUser = db.query(
       `SELECT username, first_name, last_name, phone
-      FROM messages JOIN users ON messages.to_user = users.username
+      FROM messages JOIN users ON messages.to_username = users.username
       WHERE messages.id = $1
       `,
       [id]
@@ -65,7 +68,7 @@ class Message {
 
     let fromUser = db.query(
       `SELECT username, first_name, last_name, phone
-      FROM messages JOIN users ON messages.from_user = users.username
+      FROM messages JOIN users ON messages.from_username = users.username
       WHERE messages.id = $1
       `,
       [id]
@@ -82,40 +85,40 @@ class Message {
     this._404Error(fromUser);
 
     //TODO: Get rid of the extra lines of code and chain rows with map
-    let toUserArr = toUser.rows;
-    let fromUserArr = fromUser.rows;
-    let getMessagesArr = getMessage.rows;
+    let toUserObj = toUser.rows[0];
+    let fromUserObj = fromUser.rows[0];
+    let getMessagesObj = getMessage.rows[0];
 
-    let toUserObject = toUserArr.map(val => {
-      return {
-        username: val.username,
-        first_name: val.first_name,
-        last_name: val.last_name,
-        phone: val.phone
-      };
+    let { body, sent_at, read_at } = getMessagesObj;
+
+    let finalMessagesObj = {
+      id,
+      from_user: fromUserObj,
+      to_user: toUserObj,
+      body,
+      sent_at,
+      read_at
+    };
+    return finalMessagesObj;
+  }
+
+  static async twilio({ from_username, to_username, body }) {
+    let newMessage = await Message.create({ from_username, to_username, body });
+    let result = await db.query(
+      `SELECT phone FROM users WHERE username = $1
+      `,
+      [to_username]
+    );
+    debugger;
+    //console.log('wtf', result, Object.keys(result));
+    let userPhoneNumber = result.rows[0].phone;
+    let twilio = client.messages.create({
+      body: newMessage.body,
+      from: PHONE_NUMBER,
+      to: userPhoneNumber
     });
 
-    let fromUserObject = fromUserArr.map(val => {
-      return {
-        username: val.username,
-        first_name: val.first_name,
-        last_name: val.last_name,
-        phone: val.phone
-      };
-    });
-
-    let getMessagesObject = getMessagesArr.map(val => {
-      return {
-        id: val.id,
-        from_user: fromUserObject,
-        to_user: toUserObject,
-        body: val.body,
-        sent_at: val.sent_at,
-        read_at: val.read_at
-      };
-    });
-
-    return getMessagesObject;
+    return twilio;
   }
 }
 
